@@ -1,40 +1,128 @@
-/**
- * Copyright 2013 Dennis Ippel
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.rajawali3d.materials;
 
 import android.graphics.Color;
 import android.opengl.GLES20;
-import androidx.annotation.NonNull;
-
-import org.rajawali3d.BufferInfo;
-import org.rajawali3d.Object3D;
 import org.rajawali3d.lights.ALight;
-import org.rajawali3d.materials.methods.DiffuseMethod;
-import org.rajawali3d.materials.methods.IDiffuseMethod;
-import org.rajawali3d.materials.methods.ISpecularMethod;
-import org.rajawali3d.materials.methods.SpecularMethod;
-import org.rajawali3d.materials.plugins.IMaterialPlugin;
-import org.rajawali3d.materials.shaders.FragmentShader;
-import org.rajawali3d.materials.shaders.IShaderFragment;
 import org.rajawali3d.materials.shaders.VertexShader;
-import org.rajawali3d.materials.shaders.fragments.LightsFragmentShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.LightsVertexShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.texture.AlphaMapFragmentShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.texture.DiffuseTextureFragmentShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.texture.EnvironmentMapFragmentShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.texture.LightMapFragmentShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.texture.NormalMapFragmentShaderFragment;
-import org.rajawali3d.materials.shaders.fragments.texture.SkyTextureFragmentShaderFragment;
+import org.rajawali3d.materials.shaders.FragmentShader;
+import org.rajawali3d.materials.textures.ATexture;
+import org.rajawali3d.loader.SmartLoader;
+import org.rajawali3d.loader.ResourceCallback;
+import org.rajawali3d.shaders.ShaderProgram;
+
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+
+public class Material {
+
+    // خصائص أساسية
+    private VertexShader mVertexShader;
+    private FragmentShader mFragmentShader;
+    private List<ALight> mLights;
+    private ArrayList<ATexture> mTextureList;
+    private boolean mUseVertexColors = false;
+    private boolean mLightingEnabled = true;
+    private float[] mColor = {1, 0, 0, 1};
+
+    // خصائص جديدة لدعم RJ Shaders
+    private ShaderProgram mRJShaderProgram;
+    private String mVertexShaderPath, mFragmentShaderPath;
+    private SmartLoader mSmartLoader = new SmartLoader();
+    private boolean mIsDirty = true;
+
+    public Material() {
+        mTextureList = new ArrayList<>();
+        mLights = new ArrayList<>();
+    }
+
+    // -------------------------------------
+    // دعم ألوان الـMaterial
+    public void setColor(int color) {
+        mColor[0] = Color.red(color) / 255.f;
+        mColor[1] = Color.green(color) / 255.f;
+        mColor[2] = Color.blue(color) / 255.f;
+        mColor[3] = Color.alpha(color) / 255.f;
+    }
+
+    public int getColor() {
+        return Color.argb((int)(mColor[3]*255), (int)(mColor[0]*255), (int)(mColor[1]*255), (int)(mColor[2]*255));
+    }
+
+    public void useVertexColors(boolean value) {
+        mUseVertexColors = value;
+        mIsDirty = true;
+    }
+
+    // -------------------------------------
+    // تحميل ملفات rjvs و rjfs بشكل Async
+    public void loadRJShader(String vertexPath, String fragmentPath, ResourceCallback callback) {
+        this.mVertexShaderPath = vertexPath;
+        this.mFragmentShaderPath = fragmentPath;
+
+        // تحميل Vertex Shader
+        mSmartLoader.loadResourceAsync(vertexPath, new ResourceCallback() {
+            @Override
+            public void onLoaded(Object vertexResource) {
+                // تحميل Fragment Shader بعد Vertex
+                mSmartLoader.loadResourceAsync(fragmentPath, new ResourceCallback() {
+                    @Override
+                    public void onLoaded(Object fragmentResource) {
+                        mRJShaderProgram = new ShaderProgram(
+                                (String) vertexResource,
+                                (String) fragmentResource
+                        );
+                        mIsDirty = true; // علامة أن Material بحاجة لإعادة بناء
+                        if(callback != null) callback.onLoaded(mRJShaderProgram);
+                    }
+                }, path -> new String(Files.readAllBytes(Paths.get(path))));
+            }
+        }, path -> new String(Files.readAllBytes(Paths.get(path))));
+    }
+
+    // -------------------------------------
+    // إنشاء أو إعادة بناء الشيدر
+    public void createShaders() {
+        if(!mIsDirty) return;
+
+        if(mRJShaderProgram != null) {
+            // استخدام البرنامج الجديد
+            mVertexShader = new VertexShader(mRJShaderProgram.getVertexShader());
+            mFragmentShader = new FragmentShader(mRJShaderProgram.getFragmentShader());
+            compileAndLinkShaders();
+        } else {
+            // هنا يمكنك وضع الكود الأصلي لإنشاء Vertex + Fragment Shader العادي
+        }
+
+        mIsDirty = false;
+    }
+
+    private void compileAndLinkShaders() {
+        // مثال تبسيطي لتجميع الشيدر وربطه (GLES20)
+        int vHandle = GLES20.glCreateShader(GLES20.GL_VERTEX_SHADER);
+        int fHandle = GLES20.glCreateShader(GLES20.GL_FRAGMENT_SHADER);
+
+        GLES20.glShaderSource(vHandle, mVertexShader.getShaderString());
+        GLES20.glCompileShader(vHandle);
+
+        GLES20.glShaderSource(fHandle, mFragmentShader.getShaderString());
+        GLES20.glCompileShader(fHandle);
+
+        int programHandle = GLES20.glCreateProgram();
+        GLES20.glAttachShader(programHandle, vHandle);
+        GLES20.glAttachShader(programHandle, fHandle);
+        GLES20.glLinkProgram(programHandle);
+    }
+
+    // -------------------------------------
+    // تغيير البرنامج ديناميكيًا
+    public void setRJShaderProgram(ShaderProgram shaderProgram) {
+        this.mRJShaderProgram = shaderProgram;
+        mIsDirty = true;
+        createShaders();
+    }
+                                                 }import org.rajawali3d.materials.shaders.fragments.texture.SkyTextureFragmentShaderFragment;
 import org.rajawali3d.materials.textures.ATexture;
 import org.rajawali3d.materials.textures.ATexture.TextureException;
 import org.rajawali3d.materials.textures.CubeMapTexture;
